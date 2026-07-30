@@ -1,0 +1,9 @@
+{
+  "name": "香港巴士到站顯示屏",
+  "short_name": "HKBus ETA",
+  "start_url": "/",
+  "display": "fullscreen",
+  "background_color": "#f4f2ea",
+  "theme_color": "#f4f2ea",
+  "lang": "zh-HK"
+}

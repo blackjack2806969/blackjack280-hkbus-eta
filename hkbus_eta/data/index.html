@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh-HK">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#f4f2ea">
+  <title>香港巴士到站顯示屏</title>
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <main class="dashboard" aria-label="巴士到站顯示屏">
+    <section class="eta-panel" aria-label="巴士到站時間">
+      <header class="eta-heading" aria-label="到站次序">
+        <strong>路 線</strong>
+        <strong>1st</strong>
+        <strong>2nd</strong>
+        <strong>3rd</strong>
+      </header>
+      <div id="route-list" class="route-list" aria-live="polite"></div>
+      <span class="update-state" id="update-state">連線中</span>
+    </section>
+
+    <aside class="info-panel">
+      <div class="battery" title="裝置電量">
+        <span id="battery-text">--%</span>
+        <span class="battery-shell"><span id="battery-fill"></span></span>
+      </div>
+      <strong class="date" id="date">--/--</strong>
+      <span class="weekday" id="weekday">---</span>
+      <time id="clock">--:--</time>
+      <div class="weather" id="weather">
+        <div class="weather-icon" id="weather-icon" data-state="normal" aria-hidden="true">
+          <span class="icon-main">☁</span>
+          <span class="warning-mark"></span>
+        </div>
+        <div class="weather-readings">
+          <strong id="temperature">--°</strong>
+          <span id="humidity">--%</span>
+        </div>
+        <span class="weather-label" id="weather-label">讀取天氣</span>
+      </div>
+    </aside>
+  </main>
+
+  <button class="settings-button" id="settings-button" type="button" aria-label="開啟設定">⚙</button>
+
+  <dialog id="settings-dialog">
+    <form id="settings-form">
+      <div class="dialog-heading">
+        <div>
+          <span class="eyebrow">HKBus ETA</span>
+          <h1>顯示屏設定</h1>
+        </div>
+        <button id="close-settings" class="icon-button" type="button" aria-label="關閉">×</button>
+      </div>
+
+      <label>Wi‑Fi 名稱
+        <input name="ssid" id="ssid" autocomplete="username" required>
+      </label>
+      <label>Wi‑Fi 密碼
+        <input name="password" id="password" type="password" autocomplete="current-password"
+               placeholder="留空代表不更改">
+      </label>
+      <label>巴士站顯示名稱
+        <input name="stopLabel" id="stopLabel" value="上水" maxlength="24">
+      </label>
+
+      <fieldset>
+        <legend>三條路線</legend>
+        <div id="route-settings"></div>
+      </fieldset>
+
+      <p class="form-help">
+        巴士站 ID 可在九巴／龍運開放數據嘅 stop list 查到。儲存後裝置會重新連線。
+      </p>
+      <p class="form-status" id="form-status" role="status"></p>
+      <div class="dialog-actions">
+        <button class="secondary" id="demo-button" type="button">預覽示範</button>
+        <button class="primary" type="submit">儲存並重新啟動</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="./app.js" defer></script>
+</body>
+</html>

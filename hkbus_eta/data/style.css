@@ -1,0 +1,337 @@
+:root {
+  color-scheme: light;
+  --ink: #050505;
+  --paper: #fff;
+  --grid: #aaa;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  width: 100%;
+  min-height: 100%;
+  margin: 0;
+  background: #f2f2f2;
+  color: var(--ink);
+  font-family: Arial, "Noto Sans HK", "Microsoft JhengHei", sans-serif;
+}
+
+body {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+
+button, input { font: inherit; }
+
+.dashboard {
+  width: min(94vw, calc(94dvh * 1.95));
+  aspect-ratio: 1.95 / 1;
+  max-height: 94dvh;
+  display: grid;
+  grid-template-columns: 75% 25%;
+  background: var(--paper);
+  border: 3px solid var(--ink);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, .16);
+}
+
+.eta-panel {
+  min-width: 0;
+  padding: 1.5% 1.7% 0;
+  display: grid;
+  grid-template-rows: 14% 86%;
+  position: relative;
+}
+
+.eta-heading {
+  display: grid;
+  grid-template-columns: 26% repeat(3, 1fr);
+  align-items: center;
+  border-bottom: 2px solid var(--ink);
+  font-size: clamp(16px, 2.1vw, 34px);
+  text-align: center;
+}
+
+.eta-heading strong:first-child { text-align: left; padding-left: 4%; }
+
+.route-list {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: repeat(3, 1fr);
+}
+
+.route-row {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 26% repeat(3, 1fr);
+  align-items: stretch;
+  border-bottom: 1px solid var(--ink);
+}
+
+.route-row:last-child { border-bottom: 0; }
+
+.route-number {
+  align-self: center;
+  justify-self: start;
+  min-width: 84%;
+  margin-right: 9%;
+  padding: .13em .16em .1em;
+  border-radius: .13em;
+  background: var(--ink);
+  color: #fff;
+  font-size: clamp(27px, 4.9vw, 78px);
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -.035em;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.eta-value {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: .08em;
+  border-left: 1px solid #c7c7c7;
+  font-size: clamp(27px, 4.7vw, 76px);
+  font-weight: 800;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.eta-value b {
+  font: inherit;
+  letter-spacing: -.06em;
+  font-variant-numeric: tabular-nums;
+}
+
+.eta-value small {
+  align-self: flex-end;
+  margin-bottom: 24%;
+  font-size: .38em;
+  font-weight: 800;
+}
+
+.eta-value.unavailable { font-size: clamp(24px, 4vw, 62px); }
+
+.update-state {
+  position: absolute;
+  left: 4px;
+  bottom: 1px;
+  z-index: 2;
+  padding: 1px 3px;
+  background: #fff;
+  color: #777;
+  font-size: clamp(7px, .7vw, 11px);
+  opacity: .15;
+}
+
+.info-panel {
+  min-width: 0;
+  padding: 3.5% 5%;
+  border-left: 2px solid var(--ink);
+  display: grid;
+  grid-template-rows: 12% 19% 14% 23% 32%;
+  align-items: center;
+}
+
+.battery {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 7%;
+  font-size: clamp(14px, 2vw, 32px);
+  font-weight: 800;
+}
+
+.battery-shell {
+  order: -1;
+  width: 22%;
+  aspect-ratio: 2 / 1;
+  padding: 2px;
+  border: 3px solid var(--ink);
+  border-radius: 3px;
+  position: relative;
+}
+
+.battery-shell::after {
+  content: "";
+  position: absolute;
+  top: 27%;
+  right: -9%;
+  width: 6%;
+  height: 46%;
+  background: var(--ink);
+}
+
+#battery-fill {
+  display: block;
+  width: 0;
+  height: 100%;
+  background: var(--ink);
+}
+
+.date {
+  align-self: end;
+  display: block;
+  font-size: clamp(34px, 5.4vw, 88px);
+  line-height: .9;
+  letter-spacing: -.04em;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.weekday {
+  justify-self: center;
+  padding: .13em .55em .08em;
+  border-radius: .12em;
+  background: var(--ink);
+  color: #fff;
+  font-size: clamp(16px, 2.6vw, 42px);
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+#clock {
+  align-self: start;
+  display: block;
+  width: 100%;
+  border-bottom: 1px solid var(--ink);
+  padding-bottom: 8%;
+  font-size: clamp(35px, 5.3vw, 86px);
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -.055em;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.weather {
+  min-height: 0;
+  display: grid;
+  grid-template: 1fr 1fr 1fr / 46% 54%;
+  align-items: center;
+  padding-top: 7%;
+}
+
+.weather-icon {
+  grid-row: 1 / 4;
+  align-self: stretch;
+  display: grid;
+  place-items: center;
+  position: relative;
+  min-width: 0;
+}
+
+.icon-main {
+  font-family: "Segoe UI Symbol", sans-serif;
+  font-size: clamp(45px, 7.5vw, 118px);
+  line-height: 1;
+  filter: grayscale(1);
+}
+
+.warning-mark { display: none; }
+
+.weather-icon[data-state^="rain-"] .icon-main,
+.weather-icon[data-state^="tc-"] .icon-main { display: none; }
+
+.weather-icon[data-state^="rain-"] .warning-mark,
+.weather-icon[data-state^="tc-"] .warning-mark {
+  display: grid;
+  place-items: center;
+  width: 88%;
+  aspect-ratio: 1;
+  border: clamp(3px, .5vw, 7px) solid var(--ink);
+  border-radius: 50%;
+  font-size: clamp(15px, 2.2vw, 35px);
+  font-weight: 900;
+}
+
+.weather-icon[data-state="rain-amber"] .warning-mark::before { content: "黃雨"; }
+.weather-icon[data-state="rain-red"] .warning-mark::before { content: "紅雨"; }
+.weather-icon[data-state="rain-black"] .warning-mark::before { content: "黑雨"; }
+.weather-icon[data-state="tc-1"] .warning-mark::before { content: "T1"; }
+.weather-icon[data-state="tc-3"] .warning-mark::before { content: "T3"; }
+.weather-icon[data-state="tc-8"] .warning-mark::before { content: "T8"; }
+.weather-icon[data-state="tc-9"] .warning-mark::before { content: "T9"; }
+.weather-icon[data-state="tc-10"] .warning-mark::before { content: "T10"; }
+
+.weather-readings {
+  grid-row: 1 / 3;
+  align-self: stretch;
+  display: grid;
+  grid-template-rows: 1fr 1fr;
+  align-items: center;
+  font-size: clamp(13px, 1.65vw, 27px);
+  font-weight: 800;
+}
+
+.weather-readings strong::before { content: "上水  "; }
+.weather-readings span::before { content: "濕度  "; }
+.weather-readings strong, .weather-readings span { white-space: nowrap; }
+
+.weather-label {
+  grid-column: 2;
+  grid-row: 3;
+  font-size: clamp(13px, 1.65vw, 27px);
+  font-weight: 800;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.settings-button {
+  position: fixed;
+  right: 8px;
+  bottom: 7px;
+  z-index: 4;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #555;
+  opacity: .12;
+  cursor: pointer;
+}
+
+.settings-button:hover, .settings-button:focus-visible { opacity: 1; }
+
+dialog {
+  width: min(620px, calc(100vw - 28px));
+  max-height: calc(100dvh - 28px);
+  border: 2px solid var(--ink);
+  padding: 0;
+  background: #f5f3eb;
+  color: var(--ink);
+  overflow: auto;
+}
+
+dialog::backdrop { background: rgba(0, 0, 0, .64); }
+#settings-form { padding: 24px; }
+.dialog-heading { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 18px; }
+.eyebrow { color: #666; font-size: 12px; font-weight: 800; letter-spacing: .15em; text-transform: uppercase; }
+h1 { margin: 2px 0 0; font-size: 26px; }
+.icon-button { border: 0; background: transparent; font-size: 32px; cursor: pointer; }
+label { display: grid; gap: 5px; margin: 12px 0; font-weight: 700; }
+input { width: 100%; border: 1px solid #999; padding: 10px 11px; background: #fff; color: var(--ink); }
+input:focus { outline: 2px solid var(--ink); outline-offset: 1px; }
+fieldset { margin: 18px 0 10px; border: 1px solid #999; }
+legend { font-weight: 800; }
+.route-setting { display: grid; grid-template-columns: 100px 1fr; gap: 10px; }
+.form-help, .form-status { font-size: 13px; color: #666; }
+.form-status { min-height: 1.3em; color: var(--ink); font-weight: 700; }
+.dialog-actions { display: flex; justify-content: space-between; gap: 10px; margin-top: 18px; }
+.dialog-actions button { border: 2px solid var(--ink); padding: 9px 14px; font-weight: 800; cursor: pointer; }
+.primary { background: var(--ink); color: #fff; }
+.secondary { background: transparent; color: var(--ink); }
+
+@media (max-width: 680px) {
+  .dashboard { width: 100vw; max-height: none; border-width: 1px; box-shadow: none; }
+  .eta-panel { padding-left: 1%; }
+  .info-panel { border-left-width: 1px; }
+  .eta-heading, .route-row { grid-template-columns: 28% repeat(3, 1fr); }
+}
+
