@@ -2,3 +2,4 @@
 .idea/
 *.code-workspace
 hkbus_eta/data/config.json
+hkbus_eta/config.h
