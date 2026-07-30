@@ -6,6 +6,8 @@
 #define WIFI_PASSWORD ""
 
 #define STOP_LABEL "上水"
+// 天文台現時沒有「上水」溫度站；打鼓嶺是北區可用測站。
+#define HKO_TEMPERATURE_STATION "打鼓嶺"
 #define ROUTE_1 "A43"
 #define STOP_ID_1 ""
 #define ROUTE_2 "278A"
