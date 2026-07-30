@@ -15,7 +15,7 @@
 - `A43 / 278A / 277X`，每條顯示三班 ETA
 - 直接驅動 ST7305 RLCD，不需要 Chrome 或另一部電腦
 - 400×300 原生黑白 UI
-- SHTC3 實際室內溫度及濕度
+- 香港天文台即時室外溫度及相對濕度（不是 SHTC3 室內讀數）
 - PCF85063 RTC；有網絡時以 NTP 校時
 - 黃／紅／黑雨及 1／3／8／9／10 號風球只更換天氣圖示
 - 18650 電量顯示
@@ -49,13 +49,15 @@ ST7305 port 已放在 sketch 內，來源為 Waveshare 官方 Arduino U8g2 examp
 1. 複製 `hkbus_eta/config.example.h` 為 `hkbus_eta/config.h`。
 2. 填入 Wi-Fi SSID／密碼。
 3. 填入三條路線各自的 KMB/LWB stop ID。
-4. `config.h` 已加入 `.gitignore`，不會上載密碼到 GitHub。
+4. `HKO_TEMPERATURE_STATION` 預設為天文台「打鼓嶺」測站；可按需要改成 API 提供的其他測站。
+5. `config.h` 已加入 `.gitignore`，不會上載密碼到 GitHub。
 
 ```cpp
 #define WIFI_SSID "你的 Wi-Fi"
 #define WIFI_PASSWORD "你的密碼"
 #define ROUTE_1 "A43"
 #define STOP_ID_1 "巴士站 ID"
+#define HKO_TEMPERATURE_STATION "打鼓嶺"
 ```
 
 ## 編譯
@@ -65,8 +67,10 @@ ST7305 port 已放在 sketch 內，來源為 Waveshare 官方 Arduino U8g2 examp
 ## 資料來源
 
 - 九巴／龍運 ETA：`https://data.etabus.gov.hk`
-- 香港天文台警告：`https://data.weather.gov.hk`
-- 溫濕度：板載 SHTC3
+- 香港天文台即時天氣及警告：`https://data.weather.gov.hk`
+- 室外溫度：天文台 `rhrread` 的「打鼓嶺」測站（天文台現時沒有「上水」溫度站）
+- 室外相對濕度：天文台 `rhrread` 提供的「香港天文台」數值
+- 板載 SHTC3：只作機內感測／Serial 除錯，不會顯示成室外天氣
 - 時鐘：NTP + 板載 PCF85063
 
 ## 上游硬件資料
