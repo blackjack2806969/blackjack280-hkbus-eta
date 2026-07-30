@@ -1,379 +1,87 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
-#include <Preferences.h>
-#include <WebServer.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
-#include <LittleFS.h>
-#include <time.h>
+#include <Wire.h>
+#include <sys/time.h>
+#include "ST7305_U8g2.h"
+#include "adc_bsp.h"
+#if __has_include("config.h")
+#include "config.h"
+#else
+#include "config.example.h"
+#endif
 
-namespace {
+constexpr uint8_t SHTC3_ADDR=0x70, RTC_ADDR=0x51;
+constexpr uint32_t DATA_REFRESH_MS=60000;
+ST7305_U8g2 display(11,12,5,40,41);
+U8G2 *gfx=nullptr;
+struct RouteData { const char *route; const char *stopId; int eta[3]={-1,-1,-1}; };
+enum WarningState { NORMAL,RAIN_AMBER,RAIN_RED,RAIN_BLACK,TC1,TC3,TC8,TC9,TC10 };
+RouteData routes[3]={{ROUTE_1,STOP_ID_1},{ROUTE_2,STOP_ID_2},{ROUTE_3,STOP_ID_3}};
+float localTemp=NAN,localHumidity=NAN;
+WarningState warningState=NORMAL;
+uint32_t lastDataRefresh=0; int lastDrawnMinute=-1;
+uint8_t bcdToDec(uint8_t v){return(v>>4)*10+(v&15);} uint8_t decToBcd(uint8_t v){return((v/10)<<4)|(v%10);}
 
-constexpr char kSetupSsid[] = "HKBus-ETA-Setup";
-constexpr char kSetupPassword[] = "hkbuseta";
-constexpr uint32_t kRefreshIntervalMs = 30000;
-constexpr uint32_t kWifiTimeoutMs = 20000;
-constexpr uint16_t kHttpPort = 80;
-constexpr size_t kRouteCount = 3;
-
-struct RouteConfig {
-  String route;
-  String stopId;
-};
-
-struct AppConfig {
-  String ssid;
-  String password;
-  String stopLabel = "上水";
-  RouteConfig routes[kRouteCount] = {
-    {"A43", ""},
-    {"278A", ""},
-    {"277X", ""}
-  };
-};
-
-Preferences preferences;
-WebServer server(kHttpPort);
-AppConfig config;
-String cachedStatus = R"({"configured":false,"online":false,"routes":[],"weather":{}})";
-uint32_t lastRefresh = 0;
-bool setupMode = false;
-bool refreshInProgress = false;
-
-String contentTypeFor(const String& path) {
-  if (path.endsWith(".html")) return "text/html; charset=utf-8";
-  if (path.endsWith(".css")) return "text/css; charset=utf-8";
-  if (path.endsWith(".js")) return "application/javascript; charset=utf-8";
-  if (path.endsWith(".json") || path.endsWith(".webmanifest")) {
-    return "application/json; charset=utf-8";
-  }
-  return "text/plain; charset=utf-8";
+bool readShtc3(float &temperature,float &humidity){
+  Wire.beginTransmission(SHTC3_ADDR);Wire.write(0x35);Wire.write(0x17);if(Wire.endTransmission()!=0)return false;delay(1);
+  Wire.beginTransmission(SHTC3_ADDR);Wire.write(0x78);Wire.write(0x66);if(Wire.endTransmission()!=0)return false;delay(15);
+  if(Wire.requestFrom(SHTC3_ADDR,(uint8_t)6)!=6)return false;
+  uint16_t rawT=(Wire.read()<<8)|Wire.read();Wire.read();uint16_t rawH=(Wire.read()<<8)|Wire.read();Wire.read();
+  temperature=-45.0f+175.0f*rawT/65535.0f;humidity=100.0f*rawH/65535.0f;
+  Wire.beginTransmission(SHTC3_ADDR);Wire.write(0xB0);Wire.write(0x98);Wire.endTransmission();return true;
 }
-
-bool serveFile(String path) {
-  if (path == "/") path = "/index.html";
-  if (!LittleFS.exists(path)) return false;
-  File file = LittleFS.open(path, "r");
-  server.streamFile(file, contentTypeFor(path));
-  file.close();
-  return true;
+bool readRtc(tm &v){
+  Wire.beginTransmission(RTC_ADDR);Wire.write(0x04);if(Wire.endTransmission(false)!=0||Wire.requestFrom(RTC_ADDR,(uint8_t)7)!=7)return false;v={};
+  v.tm_sec=bcdToDec(Wire.read()&0x7F);v.tm_min=bcdToDec(Wire.read()&0x7F);v.tm_hour=bcdToDec(Wire.read()&0x3F);
+  v.tm_mday=bcdToDec(Wire.read()&0x3F);v.tm_wday=bcdToDec(Wire.read()&7);v.tm_mon=bcdToDec(Wire.read()&0x1F)-1;v.tm_year=bcdToDec(Wire.read())+100;return v.tm_year>=120;
 }
-
-void loadConfig() {
-  preferences.begin("hkbus-eta", true);
-  config.ssid = preferences.getString("ssid", "");
-  config.password = preferences.getString("password", "");
-  config.stopLabel = preferences.getString("stopLabel", "上水");
-  for (size_t i = 0; i < kRouteCount; ++i) {
-    const String routeKey = "route" + String(i);
-    const String stopKey = "stop" + String(i);
-    config.routes[i].route =
-      preferences.getString(routeKey.c_str(), config.routes[i].route);
-    config.routes[i].stopId =
-      preferences.getString(stopKey.c_str(), "");
-  }
-  preferences.end();
+void writeRtc(const tm &v){
+  Wire.beginTransmission(RTC_ADDR);Wire.write(0x04);Wire.write(decToBcd(v.tm_sec));Wire.write(decToBcd(v.tm_min));Wire.write(decToBcd(v.tm_hour));
+  Wire.write(decToBcd(v.tm_mday));Wire.write(decToBcd(v.tm_wday));Wire.write(decToBcd(v.tm_mon+1));Wire.write(decToBcd((v.tm_year+1900)%100));Wire.endTransmission();
 }
-
-void saveConfig(const JsonDocument& body) {
-  preferences.begin("hkbus-eta", false);
-  const String ssid = body["ssid"] | "";
-  const String password = body["password"] | "";
-  const String stopLabel = body["stopLabel"] | "上水";
-
-  if (!ssid.isEmpty()) preferences.putString("ssid", ssid);
-  if (!password.isEmpty()) preferences.putString("password", password);
-  preferences.putString("stopLabel", stopLabel);
-
-  JsonArrayConst routes = body["routes"].as<JsonArrayConst>();
-  for (size_t i = 0; i < kRouteCount && i < routes.size(); ++i) {
-    const String routeKey = "route" + String(i);
-    const String stopKey = "stop" + String(i);
-    String route = routes[i]["route"] | "";
-    route.toUpperCase();
-    const String stopId = routes[i]["stopId"] | "";
-    preferences.putString(routeKey.c_str(), route);
-    preferences.putString(stopKey.c_str(), stopId);
-  }
-  preferences.end();
+bool getJson(const String &url,JsonDocument &json){
+  WiFiClientSecure client;client.setInsecure();HTTPClient http;http.setConnectTimeout(7000);http.setTimeout(9000);if(!http.begin(client,url))return false;
+  http.addHeader("Accept","application/json");http.addHeader("User-Agent","blackjack280-hkbus-eta-native/0.2");int code=http.GET();
+  if(code!=HTTP_CODE_OK){Serial.printf("GET -> %d\n",code);http.end();return false;}DeserializationError error=deserializeJson(json,http.getStream());http.end();return !error;
 }
-
-bool isConfigured() {
-  if (config.ssid.isEmpty()) return false;
-  for (const auto& route : config.routes) {
-    if (route.route.isEmpty() || route.stopId.isEmpty()) return false;
-  }
-  return true;
+time_t parseEta(const char *iso){
+  if(!iso||strlen(iso)<19)return 0;tm v={};if(sscanf(iso,"%d-%d-%dT%d:%d:%d",&v.tm_year,&v.tm_mon,&v.tm_mday,&v.tm_hour,&v.tm_min,&v.tm_sec)!=6)return 0;
+  v.tm_year-=1900;v.tm_mon--;return timegm(&v)-8*3600;
 }
-
-void startSetupAccessPoint() {
-  setupMode = true;
-  WiFi.mode(WIFI_AP_STA);
-  WiFi.softAP(kSetupSsid, kSetupPassword);
-  Serial.printf("Setup Wi-Fi: %s / %s\n", kSetupSsid, kSetupPassword);
-  Serial.printf("Open http://%s/\n", WiFi.softAPIP().toString().c_str());
+void fetchRoute(RouteData &route){
+  for(int &v:route.eta)v=-1;if(!strlen(route.stopId)||WiFi.status()!=WL_CONNECTED)return;JsonDocument json;
+  String url="https://data.etabus.gov.hk/v1/transport/kmb/eta/"+String(route.stopId)+"/"+route.route+"/1";if(!getJson(url,json))return;
+  int index=0;time_t now=time(nullptr);for(JsonObjectConst item:json["data"].as<JsonArrayConst>()){if(index==3)break;time_t arrival=parseEta(item["eta"]);long seconds=arrival-now;if(arrival&&seconds>=-30)route.eta[index++]=max(0L,(seconds+30)/60);}
 }
-
-bool connectWifi() {
-  if (config.ssid.isEmpty()) return false;
-  WiFi.mode(WIFI_STA);
-  WiFi.setSleep(false);
-  WiFi.begin(config.ssid.c_str(), config.password.c_str());
-  const uint32_t started = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - started < kWifiTimeoutMs) {
-    delay(250);
-    Serial.print('.');
-  }
-  Serial.println();
-  if (WiFi.status() != WL_CONNECTED) return false;
-
-  Serial.printf("Connected: http://%s/\n", WiFi.localIP().toString().c_str());
-  configTime(8 * 3600, 0, "time.cloudflare.com", "pool.ntp.org", "time.google.com");
-  return true;
+void fetchWarnings(){
+  warningState=NORMAL;JsonDocument json;if(WiFi.status()!=WL_CONNECTED||!getJson("https://data.weather.gov.hk/weatherAPI/opendata/weather.php?dataType=warnsum&lang=tc",json))return;
+  String rain=json["WRAIN"]["code"]|"";if(rain=="WRAINB"){warningState=RAIN_BLACK;return;}if(rain=="WRAINR"){warningState=RAIN_RED;return;}if(rain=="WRAINA"){warningState=RAIN_AMBER;return;}
+  String tc=json["WTCSGNL"]["code"]|"";if(tc=="TC10")warningState=TC10;else if(tc=="TC9")warningState=TC9;else if(tc.startsWith("TC8"))warningState=TC8;else if(tc=="TC3")warningState=TC3;else if(tc=="TC1")warningState=TC1;
 }
-
-bool getJson(const String& url, JsonDocument& result) {
-  if (WiFi.status() != WL_CONNECTED) return false;
-  WiFiClientSecure client;
-  client.setInsecure();  // Public read-only APIs; avoids failures when device clock is not ready.
-  HTTPClient http;
-  http.setConnectTimeout(6000);
-  http.setTimeout(8000);
-  if (!http.begin(client, url)) return false;
-  http.addHeader("Accept", "application/json");
-  http.addHeader("User-Agent", "blackjack280-hkbus-eta/1.0");
-  const int status = http.GET();
-  if (status != HTTP_CODE_OK) {
-    Serial.printf("GET %s -> %d\n", url.c_str(), status);
-    http.end();
-    return false;
-  }
-  const DeserializationError error = deserializeJson(result, http.getStream());
-  http.end();
-  if (error) {
-    Serial.printf("JSON error: %s\n", error.c_str());
-    return false;
-  }
-  return true;
+void centered(const char *text,int x,int width,int y){gfx->drawUTF8(x+max(0,(width-gfx->getUTF8Width(text))/2),y,text);}
+void drawWeatherIcon(int cx,int cy){
+  if(warningState!=NORMAL){gfx->drawCircle(cx,cy,27);gfx->drawCircle(cx,cy,26);const char *label=warningState==RAIN_AMBER?"黃雨":warningState==RAIN_RED?"紅雨":warningState==RAIN_BLACK?"黑雨":warningState==TC1?"T1":warningState==TC3?"T3":warningState==TC8?"T8":warningState==TC9?"T9":"T10";gfx->setFont(u8g2_font_unifont_t_chinese2);centered(label,cx-27,54,cy+5);return;}
+  gfx->drawDisc(cx-10,cy-9,12);for(int a=0;a<360;a+=45){float r=a*PI/180.0f;gfx->drawLine(cx-10+cos(r)*17,cy-9+sin(r)*17,cx-10+cos(r)*22,cy-9+sin(r)*22);}
+  gfx->setDrawColor(0);gfx->drawDisc(cx+7,cy+8,18);gfx->drawDisc(cx-9,cy+12,13);gfx->setDrawColor(1);gfx->drawCircle(cx+7,cy+8,18);gfx->drawCircle(cx-9,cy+12,13);gfx->drawHLine(cx-22,cy+24,43);
 }
-
-time_t parseHongKongIsoTime(const char* value) {
-  if (value == nullptr || strlen(value) < 19) return 0;
-  tm parsed = {};
-  if (sscanf(value, "%d-%d-%dT%d:%d:%d",
-             &parsed.tm_year, &parsed.tm_mon, &parsed.tm_mday,
-             &parsed.tm_hour, &parsed.tm_min, &parsed.tm_sec) != 6) {
-    return 0;
-  }
-  parsed.tm_year -= 1900;
-  parsed.tm_mon -= 1;
-  // timegm interprets fields as UTC. Subtract HKT's UTC+8 offset afterwards.
-  return timegm(&parsed) - (8 * 3600);
+void drawDashboard(){
+  tm now={};getLocalTime(&now,50);gfx->clearBuffer();gfx->setDrawColor(1);gfx->drawFrame(0,0,400,300);gfx->drawVLine(300,0,300);gfx->drawHLine(0,40,300);gfx->drawHLine(0,126,300);gfx->drawHLine(0,212,300);gfx->drawVLine(90,40,260);gfx->drawVLine(160,40,260);gfx->drawVLine(230,40,260);
+  gfx->setFont(u8g2_font_unifont_t_chinese2);gfx->drawUTF8(10,27,"路 線");gfx->setFont(u8g2_font_helvB14_tf);centered("1st",90,70,27);centered("2nd",160,70,27);centered("3rd",230,70,27);
+  int rowTop[3]={40,126,212};for(int r=0;r<3;++r){int y=rowTop[r];gfx->drawRBox(6,y+17,78,52,5);gfx->setDrawColor(0);gfx->setFont(u8g2_font_helvB18_tf);centered(routes[r].route,6,78,y+51);gfx->setDrawColor(1);
+    for(int i=0;i<3;++i){char text[6];routes[r].eta[i]<0?strcpy(text,"--"):snprintf(text,sizeof(text),"%d",routes[r].eta[i]);gfx->setFont(u8g2_font_logisoso28_tn);centered(text,90+i*70,54,y+55);if(routes[r].eta[i]>=0){gfx->setFont(u8g2_font_unifont_t_chinese2);gfx->drawUTF8(143+i*70,y+55,"分");}}}
+  uint8_t battery=Adc_GetBatteryLevel();gfx->drawFrame(331,12,26,12);gfx->drawBox(357,15,3,6);gfx->drawBox(334,15,map(battery,0,100,0,20),6);char text[28];gfx->setFont(u8g2_font_7x14B_tf);snprintf(text,sizeof(text),"%u%%",battery);gfx->drawStr(365,23,text);
+  gfx->setFont(u8g2_font_logisoso24_tn);snprintf(text,sizeof(text),"%02d/%02d",now.tm_mday,now.tm_mon+1);centered(text,300,100,66);static const char *week[]={"星期日","星期一","星期二","星期三","星期四","星期五","星期六"};
+  gfx->drawRBox(319,76,63,26,4);gfx->setDrawColor(0);gfx->setFont(u8g2_font_unifont_t_chinese2);centered(week[now.tm_wday],319,63,95);gfx->setDrawColor(1);gfx->setFont(u8g2_font_logisoso24_tn);snprintf(text,sizeof(text),"%02d:%02d",now.tm_hour,now.tm_min);centered(text,300,100,139);gfx->drawHLine(307,151,86);
+  drawWeatherIcon(330,215);gfx->setFont(u8g2_font_unifont_t_chinese2);isnan(localTemp)?strcpy(text,"上水 --°C"):snprintf(text,sizeof(text),"上水 %.0f°C",localTemp);gfx->drawUTF8(353,197,text);isnan(localHumidity)?strcpy(text,"濕度 --%"):snprintf(text,sizeof(text),"濕度 %.0f%%",localHumidity);gfx->drawUTF8(353,221,text);gfx->drawUTF8(353,246,warningState==NORMAL?"本地天氣":"天氣警告");if(!strlen(WIFI_SSID)){gfx->setFont(u8g2_font_5x7_tf);gfx->drawStr(306,292,"EDIT config.h");}gfx->sendBuffer();
 }
-
-void appendEtas(JsonObject target, const RouteConfig& routeConfig) {
-  target["route"] = routeConfig.route;
-  JsonArray etaOut = target["eta"].to<JsonArray>();
-
-  JsonDocument response;
-  const String url = "https://data.etabus.gov.hk/v1/transport/kmb/eta/" +
-                     routeConfig.stopId + "/" + routeConfig.route + "/1";
-  if (!getJson(url, response)) return;
-
-  const time_t now = time(nullptr);
-  for (JsonObjectConst item : response["data"].as<JsonArrayConst>()) {
-    if (etaOut.size() >= 3) break;
-    const char* eta = item["eta"];
-    const time_t arrival = parseHongKongIsoTime(eta);
-    if (arrival <= 0 || now <= 0) continue;
-    const long seconds = static_cast<long>(arrival - now);
-    if (seconds < -30) continue;
-    etaOut.add(max(0L, (seconds + 30) / 60));
-  }
+void syncClock(){
+  configTime(8*3600,0,"time.cloudflare.com","pool.ntp.org","time.google.com");tm v={};if(getLocalTime(&v,8000)){writeRtc(v);return;}if(readRtc(v)){time_t utc=timegm(&v)-8*3600;timeval tv={utc,0};settimeofday(&tv,nullptr);}
 }
-
-bool readWeather(JsonObject weather) {
-  JsonDocument current;
-  if (!getJson(
-        "https://data.weather.gov.hk/weatherAPI/opendata/weather.php"
-        "?dataType=rhrread&lang=tc",
-        current)) {
-    return false;
-  }
-
-  bool foundSheungShui = false;
-  for (JsonObjectConst station : current["temperature"]["data"].as<JsonArrayConst>()) {
-    const String place = station["place"] | "";
-    if (place == "上水") {
-      weather["temperature"] = station["value"];
-      foundSheungShui = true;
-      break;
-    }
-  }
-  if (!foundSheungShui && current["temperature"]["data"].size() > 0) {
-    weather["temperature"] = current["temperature"]["data"][0]["value"];
-  }
-  if (current["humidity"]["data"].size() > 0) {
-    weather["humidity"] = current["humidity"]["data"][0]["value"];
-  }
-  if (current["icon"].size() > 0) {
-    weather["icon"] = current["icon"][0];
-  }
-  weather["state"] = "normal";
-  weather["label"] = "上水天氣";
-
-  JsonDocument warnings;
-  if (!getJson(
-        "https://data.weather.gov.hk/weatherAPI/opendata/weather.php"
-        "?dataType=warnsum&lang=tc",
-        warnings)) {
-    return true;
-  }
-
-  // Rainstorm takes visual priority, followed by the highest tropical cyclone signal.
-  const String rainCode = warnings["WRAIN"]["code"] | "";
-  if (rainCode == "WRAINB") {
-    weather["state"] = "rain-black";
-    weather["label"] = "黑色暴雨警告";
-    return true;
-  }
-  if (rainCode == "WRAINR") {
-    weather["state"] = "rain-red";
-    weather["label"] = "紅色暴雨警告";
-    return true;
-  }
-  if (rainCode == "WRAINA") {
-    weather["state"] = "rain-amber";
-    weather["label"] = "黃色暴雨警告";
-    return true;
-  }
-
-  const String tcCode = warnings["WTCSGNL"]["code"] | "";
-  if (tcCode == "TC10") {
-    weather["state"] = "tc-10";
-    weather["label"] = "十號風球";
-  } else if (tcCode == "TC9") {
-    weather["state"] = "tc-9";
-    weather["label"] = "九號風球";
-  } else if (tcCode.startsWith("TC8")) {
-    weather["state"] = "tc-8";
-    weather["label"] = "八號風球";
-  } else if (tcCode == "TC3") {
-    weather["state"] = "tc-3";
-    weather["label"] = "三號風球";
-  } else if (tcCode == "TC1") {
-    weather["state"] = "tc-1";
-    weather["label"] = "一號風球";
-  }
-  return true;
+void refreshData(){readShtc3(localTemp,localHumidity);if(WiFi.status()==WL_CONNECTED){for(RouteData &route:routes)fetchRoute(route);fetchWarnings();}lastDataRefresh=millis();drawDashboard();}
+void setup(){
+  Serial.begin(115200);Wire.begin(14,13);Adc_PortInit();display.begin(U8G2_R1);gfx=display.getU8g2();if(strlen(WIFI_SSID)){WiFi.mode(WIFI_STA);WiFi.begin(WIFI_SSID,WIFI_PASSWORD);uint32_t started=millis();while(WiFi.status()!=WL_CONNECTED&&millis()-started<20000)delay(250);}syncClock();refreshData();
 }
-
-void refreshData() {
-  if (refreshInProgress || WiFi.status() != WL_CONNECTED || !isConfigured()) return;
-  refreshInProgress = true;
-  lastRefresh = millis();
-
-  JsonDocument status;
-  status["configured"] = true;
-  status["online"] = true;
-  status["stopLabel"] = config.stopLabel;
-  status["uptime"] = millis() / 1000;
-  status["rssi"] = WiFi.RSSI();
-  JsonArray routes = status["routes"].to<JsonArray>();
-
-  bool hasAnyEta = false;
-  for (const auto& routeConfig : config.routes) {
-    JsonObject route = routes.add<JsonObject>();
-    appendEtas(route, routeConfig);
-    if (route["eta"].size() > 0) hasAnyEta = true;
-    server.handleClient();
-  }
-
-  JsonObject weather = status["weather"].to<JsonObject>();
-  const bool hasWeather = readWeather(weather);
-  status["online"] = hasAnyEta || hasWeather;
-
-  String nextStatus;
-  serializeJson(status, nextStatus);
-  cachedStatus = nextStatus;
-  refreshInProgress = false;
-}
-
-void handleStatus() {
-  server.sendHeader("Cache-Control", "no-store");
-  server.send(200, "application/json; charset=utf-8", cachedStatus);
-}
-
-void handleGetConfig() {
-  JsonDocument output;
-  output["ssid"] = config.ssid;
-  output["stopLabel"] = config.stopLabel;
-  JsonArray routes = output["routes"].to<JsonArray>();
-  for (const auto& configuredRoute : config.routes) {
-    JsonObject route = routes.add<JsonObject>();
-    route["route"] = configuredRoute.route;
-    route["stopId"] = configuredRoute.stopId;
-  }
-  String body;
-  serializeJson(output, body);
-  server.sendHeader("Cache-Control", "no-store");
-  server.send(200, "application/json; charset=utf-8", body);
-}
-
-void handlePostConfig() {
-  if (!server.hasArg("plain")) {
-    server.send(400, "application/json", R"({"error":"missing JSON body"})");
-    return;
-  }
-  JsonDocument body;
-  const DeserializationError error = deserializeJson(body, server.arg("plain"));
-  if (error || !body["routes"].is<JsonArray>()) {
-    server.send(400, "application/json", R"({"error":"invalid configuration"})");
-    return;
-  }
-  saveConfig(body);
-  server.send(200, "application/json", R"({"ok":true,"restarting":true})");
-  delay(500);
-  ESP.restart();
-}
-
-void configureServer() {
-  server.on("/api/status", HTTP_GET, handleStatus);
-  server.on("/api/config", HTTP_GET, handleGetConfig);
-  server.on("/api/config", HTTP_POST, handlePostConfig);
-  server.onNotFound([]() {
-    if (!serveFile(server.uri())) {
-      // Captive-portal friendly fallback: unknown paths return the setup UI.
-      serveFile("/index.html");
-    }
-  });
-  server.begin();
-}
-
-}  // namespace
-
-void setup() {
-  Serial.begin(115200);
-  delay(300);
-  Serial.println("\nHKBus ETA starting");
-
-  if (!LittleFS.begin(true)) {
-    Serial.println("LittleFS mount failed");
-  }
-  loadConfig();
-  if (!connectWifi()) startSetupAccessPoint();
-  configureServer();
-  refreshData();
-}
-
-void loop() {
-  server.handleClient();
-  if (!setupMode && WiFi.status() != WL_CONNECTED) {
-    if (!connectWifi()) startSetupAccessPoint();
-  }
-  if (!setupMode && millis() - lastRefresh >= kRefreshIntervalMs) {
-    refreshData();
-  }
-  delay(2);
-}
+void loop(){tm now={};if(getLocalTime(&now,10)&&now.tm_min!=lastDrawnMinute){lastDrawnMinute=now.tm_min;drawDashboard();}if(millis()-lastDataRefresh>=DATA_REFRESH_MS)refreshData();delay(250);}
