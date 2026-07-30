@@ -12,6 +12,9 @@
 #else
 #include "config.example.h"
 #endif
+#ifndef HKO_TEMPERATURE_STATION
+#define HKO_TEMPERATURE_STATION "打鼓嶺"
+#endif
 
 constexpr uint8_t SHTC3_ADDR=0x70, RTC_ADDR=0x51;
 constexpr uint32_t DATA_REFRESH_MS=60000;
@@ -56,6 +59,18 @@ void fetchRoute(RouteData &route){
   String url="https://data.etabus.gov.hk/v1/transport/kmb/eta/"+String(route.stopId)+"/"+route.route+"/1";if(!getJson(url,json))return;
   int index=0;time_t now=time(nullptr);for(JsonObjectConst item:json["data"].as<JsonArrayConst>()){if(index==3)break;time_t arrival=parseEta(item["eta"]);long seconds=arrival-now;if(arrival&&seconds>=-30)route.eta[index++]=max(0L,(seconds+30)/60);}
 }
+bool fetchOutdoorWeather(){
+  if(WiFi.status()!=WL_CONNECTED)return false;JsonDocument json;
+  if(!getJson("https://data.weather.gov.hk/weatherAPI/opendata/weather.php?dataType=rhrread&lang=tc",json))return false;
+  bool updated=false;
+  for(JsonObjectConst item:json["temperature"]["data"].as<JsonArrayConst>()){
+    const char *place=item["place"]|"";
+    if(strcmp(place,HKO_TEMPERATURE_STATION)==0){localTemp=item["value"].as<float>();updated=true;break;}
+  }
+  JsonArrayConst humidity=json["humidity"]["data"].as<JsonArrayConst>();
+  if(!humidity.isNull()&&humidity.size()>0){localHumidity=humidity[0]["value"].as<float>();updated=true;}
+  return updated;
+}
 void fetchWarnings(){
   warningState=NORMAL;JsonDocument json;if(WiFi.status()!=WL_CONNECTED||!getJson("https://data.weather.gov.hk/weatherAPI/opendata/weather.php?dataType=warnsum&lang=tc",json))return;
   String rain=json["WRAIN"]["code"]|"";if(rain=="WRAINB"){warningState=RAIN_BLACK;return;}if(rain=="WRAINR"){warningState=RAIN_RED;return;}if(rain=="WRAINA"){warningState=RAIN_AMBER;return;}
@@ -80,7 +95,12 @@ void drawDashboard(){
 void syncClock(){
   configTime(8*3600,0,"time.cloudflare.com","pool.ntp.org","time.google.com");tm v={};if(getLocalTime(&v,8000)){writeRtc(v);return;}if(readRtc(v)){time_t utc=timegm(&v)-8*3600;timeval tv={utc,0};settimeofday(&tv,nullptr);}
 }
-void refreshData(){readShtc3(localTemp,localHumidity);if(WiFi.status()==WL_CONNECTED){for(RouteData &route:routes)fetchRoute(route);fetchWarnings();}lastDataRefresh=millis();drawDashboard();}
+void refreshData(){
+  float boardTemp=NAN,boardHumidity=NAN;
+  if(readShtc3(boardTemp,boardHumidity))Serial.printf("SHTC3 board: %.1f C, %.1f %%\n",boardTemp,boardHumidity);
+  if(WiFi.status()==WL_CONNECTED){for(RouteData &route:routes)fetchRoute(route);fetchOutdoorWeather();fetchWarnings();}
+  lastDataRefresh=millis();drawDashboard();
+}
 void setup(){
   Serial.begin(115200);Wire.begin(14,13);Adc_PortInit();display.begin(U8G2_R1);gfx=display.getU8g2();if(strlen(WIFI_SSID)){WiFi.mode(WIFI_STA);WiFi.begin(WIFI_SSID,WIFI_PASSWORD);uint32_t started=millis();while(WiFi.status()!=WL_CONNECTED&&millis()-started<20000)delay(250);}syncClock();refreshData();
 }
