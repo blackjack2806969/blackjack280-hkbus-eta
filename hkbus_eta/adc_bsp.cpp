@@ -13,9 +13,11 @@ void Adc_PortInit() {
   cali.atten = ADC_ATTEN_DB_12;
   cali.bitwidth = ADC_BITWIDTH_12;
   ESP_ERROR_CHECK(adc_cali_create_scheme_curve_fitting(&cali, &calibration));
+
   adc_oneshot_unit_init_cfg_t unit = {};
   unit.unit_id = ADC_UNIT_1;
   ESP_ERROR_CHECK(adc_oneshot_new_unit(&unit, &adc1));
+
   adc_oneshot_chan_cfg_t channel = {};
   channel.bitwidth = ADC_BITWIDTH_12;
   channel.atten = ADC_ATTEN_DB_12;
@@ -23,11 +25,12 @@ void Adc_PortInit() {
 }
 
 float Adc_GetBatteryVoltage(int *raw) {
-  int value = 0, millivolts = 0;
+  int value = 0;
+  int millivolts = 0;
   if (adc_oneshot_read(adc1, ADC_CHANNEL_3, &value) != ESP_OK) return 0;
   adc_cali_raw_to_voltage(calibration, value, &millivolts);
   if (raw) *raw = value;
-  return millivolts * 0.003f;
+  return millivolts * 0.003f;  // Board divider ratio is 3:1.
 }
 
 uint8_t Adc_GetBatteryLevel() {

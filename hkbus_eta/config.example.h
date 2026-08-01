@@ -14,3 +14,42 @@
 #define STOP_ID_2 ""
 #define ROUTE_3 "277X"
 #define STOP_ID_3 ""
+
+// Automatic route schedule. Set 1 to 4 active slots.
+// Each slot stays active until the next slot's start time.
+#define SCHEDULE_SLOT_COUNT 1
+#define SLOT_1_START_HOUR 0
+#define SLOT_1_START_MINUTE 0
+#define SLOT_1_ROUTE_1 ROUTE_1
+#define SLOT_1_STOP_ID_1 STOP_ID_1
+#define SLOT_1_ROUTE_2 ROUTE_2
+#define SLOT_1_STOP_ID_2 STOP_ID_2
+#define SLOT_1_ROUTE_3 ROUTE_3
+#define SLOT_1_STOP_ID_3 STOP_ID_3
+
+#define SLOT_2_START_HOUR 8
+#define SLOT_2_START_MINUTE 0
+#define SLOT_2_ROUTE_1 ""
+#define SLOT_2_STOP_ID_1 ""
+#define SLOT_2_ROUTE_2 ""
+#define SLOT_2_STOP_ID_2 ""
+#define SLOT_2_ROUTE_3 ""
+#define SLOT_2_STOP_ID_3 ""
+
+#define SLOT_3_START_HOUR 17
+#define SLOT_3_START_MINUTE 0
+#define SLOT_3_ROUTE_1 ""
+#define SLOT_3_STOP_ID_1 ""
+#define SLOT_3_ROUTE_2 ""
+#define SLOT_3_STOP_ID_2 ""
+#define SLOT_3_ROUTE_3 ""
+#define SLOT_3_STOP_ID_3 ""
+
+#define SLOT_4_START_HOUR 23
+#define SLOT_4_START_MINUTE 0
+#define SLOT_4_ROUTE_1 ""
+#define SLOT_4_STOP_ID_1 ""
+#define SLOT_4_ROUTE_2 ""
+#define SLOT_4_STOP_ID_2 ""
+#define SLOT_4_ROUTE_3 ""
+#define SLOT_4_STOP_ID_3 ""
