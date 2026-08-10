@@ -4,6 +4,8 @@
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <Wire.h>
+#include <driver/gpio.h>
+#include <esp_sleep.h>
 #include <sys/time.h>
 
 #include "ST7305_U8g2.h"
@@ -17,6 +19,44 @@
 
 #ifndef HKO_TEMPERATURE_STATION
 #define HKO_TEMPERATURE_STATION "打鼓嶺"
+#endif
+
+#ifndef ACTIVE_WINDOW_COUNT
+#define ACTIVE_WINDOW_COUNT 2
+#endif
+#ifndef ACTIVE_WINDOW_1_START_HOUR
+#define ACTIVE_WINDOW_1_START_HOUR 2
+#define ACTIVE_WINDOW_1_START_MINUTE 30
+#define ACTIVE_WINDOW_1_END_HOUR 4
+#define ACTIVE_WINDOW_1_END_MINUTE 0
+#define ACTIVE_WINDOW_2_START_HOUR 6
+#define ACTIVE_WINDOW_2_START_MINUTE 0
+#define ACTIVE_WINDOW_2_END_HOUR 9
+#define ACTIVE_WINDOW_2_END_MINUTE 0
+#endif
+#ifndef ACTIVE_WINDOW_3_START_HOUR
+#define ACTIVE_WINDOW_3_START_HOUR 0
+#define ACTIVE_WINDOW_3_START_MINUTE 0
+#define ACTIVE_WINDOW_3_END_HOUR 0
+#define ACTIVE_WINDOW_3_END_MINUTE 0
+#endif
+#ifndef ACTIVE_WINDOW_4_START_HOUR
+#define ACTIVE_WINDOW_4_START_HOUR 0
+#define ACTIVE_WINDOW_4_START_MINUTE 0
+#define ACTIVE_WINDOW_4_END_HOUR 0
+#define ACTIVE_WINDOW_4_END_MINUTE 0
+#endif
+#ifndef ACTIVE_WINDOW_5_START_HOUR
+#define ACTIVE_WINDOW_5_START_HOUR 0
+#define ACTIVE_WINDOW_5_START_MINUTE 0
+#define ACTIVE_WINDOW_5_END_HOUR 0
+#define ACTIVE_WINDOW_5_END_MINUTE 0
+#endif
+#ifndef ACTIVE_WINDOW_6_START_HOUR
+#define ACTIVE_WINDOW_6_START_HOUR 0
+#define ACTIVE_WINDOW_6_START_MINUTE 0
+#define ACTIVE_WINDOW_6_END_HOUR 0
+#define ACTIVE_WINDOW_6_END_MINUTE 0
 #endif
 
 // Unused schedule slots may be omitted from config.h.
@@ -60,6 +100,26 @@ constexpr uint8_t SHTC3_ADDR = 0x70;
 constexpr uint8_t RTC_ADDR = 0x51;
 constexpr uint32_t DATA_REFRESH_MS = 60000;
 constexpr uint32_t WEATHER_REFRESH_MS = 30UL * 60UL * 1000UL;
+constexpr gpio_num_t DISPLAY_SCK_PIN = GPIO_NUM_11;
+constexpr gpio_num_t DISPLAY_MOSI_PIN = GPIO_NUM_12;
+constexpr gpio_num_t DISPLAY_DC_PIN = GPIO_NUM_5;
+constexpr gpio_num_t DISPLAY_CS_PIN = GPIO_NUM_40;
+constexpr gpio_num_t DISPLAY_RST_PIN = GPIO_NUM_41;
+struct ActiveWindow { uint16_t startMinute; uint16_t endMinute; };
+constexpr ActiveWindow activeWindows[6] = {
+  {(uint16_t)(ACTIVE_WINDOW_1_START_HOUR * 60 + ACTIVE_WINDOW_1_START_MINUTE),
+   (uint16_t)(ACTIVE_WINDOW_1_END_HOUR * 60 + ACTIVE_WINDOW_1_END_MINUTE)},
+  {(uint16_t)(ACTIVE_WINDOW_2_START_HOUR * 60 + ACTIVE_WINDOW_2_START_MINUTE),
+   (uint16_t)(ACTIVE_WINDOW_2_END_HOUR * 60 + ACTIVE_WINDOW_2_END_MINUTE)},
+  {(uint16_t)(ACTIVE_WINDOW_3_START_HOUR * 60 + ACTIVE_WINDOW_3_START_MINUTE),
+   (uint16_t)(ACTIVE_WINDOW_3_END_HOUR * 60 + ACTIVE_WINDOW_3_END_MINUTE)},
+  {(uint16_t)(ACTIVE_WINDOW_4_START_HOUR * 60 + ACTIVE_WINDOW_4_START_MINUTE),
+   (uint16_t)(ACTIVE_WINDOW_4_END_HOUR * 60 + ACTIVE_WINDOW_4_END_MINUTE)},
+  {(uint16_t)(ACTIVE_WINDOW_5_START_HOUR * 60 + ACTIVE_WINDOW_5_START_MINUTE),
+   (uint16_t)(ACTIVE_WINDOW_5_END_HOUR * 60 + ACTIVE_WINDOW_5_END_MINUTE)},
+  {(uint16_t)(ACTIVE_WINDOW_6_START_HOUR * 60 + ACTIVE_WINDOW_6_START_MINUTE),
+   (uint16_t)(ACTIVE_WINDOW_6_END_HOUR * 60 + ACTIVE_WINDOW_6_END_MINUTE)}
+};
 
 ST7305_U8g2 display(11, 12, 5, 40, 41);
 U8G2 *gfx = nullptr;
@@ -103,6 +163,7 @@ WarningState warningState = NORMAL;
 uint32_t lastDataRefresh = 0;
 uint32_t lastWeatherRefresh = 0;
 int lastDrawnMinute = -1;
+bool standbyMode = false;
 
 uint8_t bcdToDec(uint8_t v) { return (v >> 4) * 10 + (v & 15); }
 uint8_t decToBcd(uint8_t v) { return ((v / 10) << 4) | (v % 10); }
@@ -142,24 +203,10 @@ bool applyRouteSchedule(const tm &now) {
   return true;
 }
 
-bool readShtc3(float &temperature, float &humidity) {
-  Wire.beginTransmission(SHTC3_ADDR);
-  Wire.write(0x35); Wire.write(0x17);
-  if (Wire.endTransmission() != 0) return false;
-  delay(1);
-  Wire.beginTransmission(SHTC3_ADDR);
-  Wire.write(0x78); Wire.write(0x66);
-  if (Wire.endTransmission() != 0) return false;
-  delay(15);
-  if (Wire.requestFrom(SHTC3_ADDR, (uint8_t)6) != 6) return false;
-  uint16_t rawT = (Wire.read() << 8) | Wire.read(); Wire.read();
-  uint16_t rawH = (Wire.read() << 8) | Wire.read(); Wire.read();
-  temperature = -45.0f + 175.0f * rawT / 65535.0f;
-  humidity = 100.0f * rawH / 65535.0f;
+void putShtc3ToSleep() {
   Wire.beginTransmission(SHTC3_ADDR);
   Wire.write(0xB0); Wire.write(0x98);
   Wire.endTransmission();
-  return true;
 }
 
 bool readRtc(tm &v) {
@@ -182,6 +229,48 @@ void writeRtc(const tm &v) {
   Wire.write(decToBcd(v.tm_hour)); Wire.write(decToBcd(v.tm_mday));
   Wire.write(decToBcd(v.tm_wday)); Wire.write(decToBcd(v.tm_mon + 1));
   Wire.write(decToBcd((v.tm_year + 1900) % 100)); Wire.endTransmission();
+}
+
+bool isActiveWindow(const tm &now) {
+  const int minuteOfDay = now.tm_hour * 60 + now.tm_min;
+  const int windowCount = constrain((int)ACTIVE_WINDOW_COUNT, 1, 6);
+  for (int i = 0; i < windowCount; ++i) {
+    const uint16_t start = activeWindows[i].startMinute;
+    const uint16_t end = activeWindows[i].endMinute;
+    if (start == end) continue;
+    if (start < end) {
+      if (minuteOfDay >= start && minuteOfDay < end) return true;
+    } else {
+      // A window such as 23:00-01:00 crosses midnight.
+      if (minuteOfDay >= start || minuteOfDay < end) return true;
+    }
+  }
+  return false;
+}
+
+uint16_t nextWakeMinute(const tm &now) {
+  const int minuteOfDay = now.tm_hour * 60 + now.tm_min;
+  const int windowCount = constrain((int)ACTIVE_WINDOW_COUNT, 1, 6);
+  uint16_t selectedStart = activeWindows[0].startMinute;
+  int bestDelta = 24 * 60 + 1;
+  for (int i = 0; i < windowCount; ++i) {
+    if (activeWindows[i].startMinute == activeWindows[i].endMinute) continue;
+    int delta = activeWindows[i].startMinute - minuteOfDay;
+    if (delta <= 0) delta += 24 * 60;
+    if (delta < bestDelta) {
+      bestDelta = delta;
+      selectedStart = activeWindows[i].startMinute;
+    }
+  }
+  return selectedStart;
+}
+
+uint32_t secondsUntilWake(const tm &now, uint16_t wakeMinute) {
+  int currentMinute = now.tm_hour * 60 + now.tm_min;
+  int deltaMinutes = wakeMinute - currentMinute;
+  if (deltaMinutes <= 0) deltaMinutes += 24 * 60;
+  int32_t seconds = deltaMinutes * 60 - now.tm_sec + 1;
+  return seconds > 0 ? (uint32_t)seconds : 1U;
 }
 
 bool getJson(const String &url, JsonDocument &json) {
@@ -465,6 +554,80 @@ void drawDashboard() {
   gfx->sendBuffer();
 }
 
+void drawSleepScreen(uint16_t wakeMinute) {
+  gfx->clearBuffer();
+  gfx->setDrawColor(1);
+  gfx->drawFrame(0, 0, SCREEN_W, SCREEN_H);
+
+  uint8_t battery = Adc_GetBatteryLevel();
+  gfx->drawFrame(331, 12, 26, 12);
+  gfx->drawBox(357, 15, 3, 6);
+  gfx->drawBox(334, 15, map(battery, 0, 100, 0, 20), 6);
+  char text[24];
+  gfx->setFont(u8g2_font_7x14B_tf);
+  snprintf(text, sizeof(text), "%u%%", battery);
+  gfx->drawStr(365, 23, text);
+
+  // Small crescent icon and a deliberately low-key status message.
+  gfx->drawDisc(157, 139, 13);
+  gfx->setDrawColor(0);
+  gfx->drawDisc(164, 132, 13);
+  gfx->setDrawColor(1);
+  gfx->setFont(u8g2_font_helvB14_tf);
+  gfx->drawStr(181, 145, "Zzz");
+
+  snprintf(text, sizeof(text), "%02u:%02u 恢復", wakeMinute / 60, wakeMinute % 60);
+  gfx->setFont(u8g2_font_unifont_t_chinese3);
+  centered(text, 100, 200, 174);
+  gfx->sendBuffer();
+}
+
+void enterScheduledStandby(const tm &now) {
+  const uint16_t wakeMinute = nextWakeMinute(now);
+  Serial.printf("Standby at %02d:%02d:%02d; resume at %02u:%02u\n",
+                now.tm_hour, now.tm_min, now.tm_sec,
+                wakeMinute / 60, wakeMinute % 60);
+
+  drawSleepScreen(wakeMinute);
+  putShtc3ToSleep();
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
+  standbyMode = true;
+}
+
+bool connectWifi() {
+  if (!strlen(WIFI_SSID)) {
+    Serial.println("Wi-Fi not configured: edit config.h");
+    return false;
+  }
+  WiFi.mode(WIFI_STA);
+  WiFi.setSleep(true);
+  Serial.printf("Connecting to Wi-Fi: %s\n", WIFI_SSID);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  uint32_t started = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - started < 20000) delay(250);
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.printf("Wi-Fi connected. IP=%s RSSI=%d dBm\n",
+                  WiFi.localIP().toString().c_str(), WiFi.RSSI());
+    return true;
+  }
+  Serial.printf("Wi-Fi failed. status=%d\n", WiFi.status());
+  return false;
+}
+
+void leaveScheduledStandby(const tm &now) {
+  standbyMode = false;
+  lastDrawnMinute = -1;
+  lastDataRefresh = 0;
+  lastWeatherRefresh = 0;
+  Serial.printf("Active window started at %02d:%02d:%02d\n",
+                now.tm_hour, now.tm_min, now.tm_sec);
+  connectWifi();
+  syncClock();
+  applyRouteSchedule(now);
+  refreshData();
+}
+
 void syncClock() {
   configTime(8 * 3600, 0, "time.cloudflare.com", "pool.ntp.org", "time.google.com");
   tm v = {};
@@ -476,10 +639,6 @@ void syncClock() {
 }
 
 void refreshData() {
-  float boardTemp = NAN, boardHumidity = NAN;
-  if (readShtc3(boardTemp, boardHumidity)) {
-    Serial.printf("SHTC3 board: %.1f C, %.1f %%\n", boardTemp, boardHumidity);
-  }
   if (WiFi.status() == WL_CONNECTED) {
     for (RouteData &route : routes) fetchRoute(route);
     if (lastWeatherRefresh == 0 || millis() - lastWeatherRefresh >= WEATHER_REFRESH_MS) {
@@ -495,37 +654,77 @@ void refreshData() {
 }
 
 void setup() {
-  Serial.begin(115200); Wire.begin(14, 13); Adc_PortInit();
+  // GPIO holds survive a deep-sleep reset; release them before SPI init.
+  gpio_deep_sleep_hold_dis();
+  gpio_hold_dis(DISPLAY_SCK_PIN);
+  gpio_hold_dis(DISPLAY_MOSI_PIN);
+  gpio_hold_dis(DISPLAY_DC_PIN);
+  gpio_hold_dis(DISPLAY_CS_PIN);
+  gpio_hold_dis(DISPLAY_RST_PIN);
+  Serial.begin(115200);
+  Wire.begin(14, 13); Adc_PortInit();
+  putShtc3ToSleep();
   display.begin(U8G2_R1); gfx = display.getU8g2();
-  if (strlen(WIFI_SSID)) {
-    WiFi.mode(WIFI_STA);
-    WiFi.setSleep(true);
-    Serial.printf("Connecting to Wi-Fi: %s\n", WIFI_SSID);
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-    uint32_t started = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - started < 20000) delay(250);
-    if (WiFi.status() == WL_CONNECTED) {
-      Serial.printf("Wi-Fi connected. IP=%s RSSI=%d dBm\n",
-                    WiFi.localIP().toString().c_str(), WiFi.RSSI());
-    } else {
-      Serial.printf("Wi-Fi failed. status=%d\n", WiFi.status());
+
+  // Seed the ESP32 clock from the board RTC before deciding whether this is
+  // an active window. Standby deliberately avoids deep sleep because this
+  // board did not reliably return from timer wake-up in hardware testing.
+  tm rtcTime = {};
+  if (readRtc(rtcTime)) {
+    time_t utc = hongKongTimeToUtc(rtcTime);
+    timeval tv = {utc, 0};
+    settimeofday(&tv, nullptr);
+    if (!isActiveWindow(rtcTime)) {
+      enterScheduledStandby(rtcTime);
+      return;
     }
-  } else {
-    Serial.println("Wi-Fi not configured: edit config.h");
   }
+
+  connectWifi();
   syncClock();
   tm initialTime = {};
-  if (getLocalTime(&initialTime, 100)) applyRouteSchedule(initialTime);
+  if (getLocalTime(&initialTime, 100)) {
+    if (!isActiveWindow(initialTime)) {
+      enterScheduledStandby(initialTime);
+      return;
+    }
+    applyRouteSchedule(initialTime);
+  } else {
+    Serial.println("Clock unavailable; staying awake to avoid an incorrect sleep schedule");
+  }
   refreshData();
 }
 
 void loop() {
   tm now = {};
-  if (getLocalTime(&now, 10) && now.tm_min != lastDrawnMinute) {
+
+  // Stable standby: keep the normal CPU clock, but leave Wi-Fi and API traffic
+  // off. Use the already-synchronised ESP32 clock to resume on schedule.
+  if (standbyMode) {
+    if (!getLocalTime(&now, 10)) {
+      delay(1000);
+      return;
+    }
+    if (isActiveWindow(now)) leaveScheduledStandby(now);
+    delay(1000);
+    return;
+  }
+
+  if (!getLocalTime(&now, 10)) {
+    delay(1000);
+    return;
+  }
+
+  if (now.tm_min != lastDrawnMinute) {
     lastDrawnMinute = now.tm_min;
+    if (!isActiveWindow(now)) {
+      enterScheduledStandby(now);
+      return;
+    }
     if (applyRouteSchedule(now)) refreshData();
     else drawDashboard();
   }
   if (millis() - lastDataRefresh >= DATA_REFRESH_MS) refreshData();
   delay(250);
 }
+
