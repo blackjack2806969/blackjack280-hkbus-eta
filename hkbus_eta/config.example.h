@@ -8,6 +8,27 @@
 #define STOP_LABEL "上水"
 // 天文台現時沒有「上水」溫度站；打鼓嶺是北區可用測站。
 #define HKO_TEMPERATURE_STATION "打鼓嶺"
+
+// The dashboard is active only inside these daily windows.
+// Outside them it shows the standby notice, turns Wi-Fi off and stops API calls.
+// Set ACTIVE_WINDOW_COUNT from 1 to 6. Add the matching WINDOW_3...WINDOW_6
+// definitions when you increase the count. Windows may cross midnight.
+#define ACTIVE_WINDOW_COUNT 2
+#define ACTIVE_WINDOW_1_START_HOUR 2
+#define ACTIVE_WINDOW_1_START_MINUTE 30
+#define ACTIVE_WINDOW_1_END_HOUR 4
+#define ACTIVE_WINDOW_1_END_MINUTE 0
+#define ACTIVE_WINDOW_2_START_HOUR 6
+#define ACTIVE_WINDOW_2_START_MINUTE 0
+#define ACTIVE_WINDOW_2_END_HOUR 9
+#define ACTIVE_WINDOW_2_END_MINUTE 0
+
+// Example third period (uncomment and set ACTIVE_WINDOW_COUNT to 3):
+// #define ACTIVE_WINDOW_3_START_HOUR 12
+// #define ACTIVE_WINDOW_3_START_MINUTE 0
+// #define ACTIVE_WINDOW_3_END_HOUR 13
+// #define ACTIVE_WINDOW_3_END_MINUTE 30
+
 #define ROUTE_1 "A43"
 #define STOP_ID_1 ""
 #define ROUTE_2 "278A"
@@ -53,3 +74,4 @@
 #define SLOT_4_STOP_ID_2 ""
 #define SLOT_4_ROUTE_3 ""
 #define SLOT_4_STOP_ID_3 ""
+
