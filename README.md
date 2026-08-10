@@ -2,7 +2,7 @@
 
 為 **Waveshare ESP32-S3-RLCD-4.2** 製作的香港巴士 ETA 顯示屏。
 
-目前穩定版本：**v1.0**
+目前穩定版本：**v1.5**
 
 ## 硬件
 
@@ -16,12 +16,15 @@
 
 - 三條可自訂巴士路線，每條顯示兩班 ETA
 - 可在 `config.h` 設定最多四個每日路線切換時段
+- 可在 `config.h` 設定最多六個每日運作時段
+- 運作時段以外顯示休息提示、關閉 Wi-Fi 並停止 API 更新
 - 直接驅動 ST7305 RLCD，不需要 Chrome 或另一部電腦
 - 400×300 原生黑白 UI
 - 香港天文台即時室外溫度、相對濕度及天氣圖示
 - PCF85063 RTC；有網絡時以 NTP 校時
 - 黃／紅／黑雨及 1／3／8／9／10 號風球只更換天氣圖示
 - 18650 電量顯示
+- 板載 SHTC3 保持 sleep，不再週期性讀取室內溫濕度
 - 原本的 HTML/CSS 設計稿保留在 `hkbus_eta/data`
 
 ## Arduino IDE
@@ -64,6 +67,21 @@ ST7305 port 已放在 sketch 內，來源為 Waveshare 官方 Arduino U8g2 examp
 #define HKO_TEMPERATURE_STATION "打鼓嶺"
 ```
 
+如需調整正常運作時間，可在 `config.h` 覆寫：
+
+```cpp
+#define ACTIVE_WINDOW_1_START_HOUR 2
+#define ACTIVE_WINDOW_1_START_MINUTE 30
+#define ACTIVE_WINDOW_1_END_HOUR 4
+#define ACTIVE_WINDOW_1_END_MINUTE 0
+#define ACTIVE_WINDOW_2_START_HOUR 6
+#define ACTIVE_WINDOW_2_START_MINUTE 0
+#define ACTIVE_WINDOW_2_END_HOUR 9
+#define ACTIVE_WINDOW_2_END_MINUTE 0
+```
+
+在正常運作時段以外上載韌體後，裝置會立即顯示「休息中」並睡到下一個時段；這是正常行為，不是死機。首次測試宜在 02:30–04:00 或 06:00–09:00 內上載，或在下一個開始時間前數分鐘上載並以 Serial Monitor 確認自動喚醒。
+
 ## 編譯
 
 用 Arduino IDE 開啟：
@@ -95,3 +113,4 @@ ST7305 port 及 ADC 實作源自 Waveshare Apache-2.0 example；原始授權見
 ## License
 
 本專案原創部分採用 [MIT](LICENSE)。
+
